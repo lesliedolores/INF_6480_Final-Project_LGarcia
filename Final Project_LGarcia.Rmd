@@ -1,0 +1,313 @@
+---
+title: "Final_INF 6480"
+author: "Leslie Garcia"
+date: "2025-12-13"
+output: html_document
+---
+
+Load packages 
+```{r}
+library(tidyverse)
+library(lubridate)
+library(broom)
+library(reshape2)
+library(scales)
+library(dplyr)
+```
+
+Read data file 
+```{r}
+border <- read.csv("Border_Crossing_Entry_Data_072025.csv")
+```
+
+Filter to California ports data only
+```{r}
+border_ca <- border %>%
+  filter(State == "California")
+
+glimpse(border_ca)
+nrow(border_ca) #should be > 0
+table(border_ca[['State']])
+```
+
+Clean data and create holiday indicators  
+```{r}
+border_ca_clean <- border_ca %>%
+mutate (
+  Date = my(Date),
+  Year = year(Date),
+  Month = month(Date),
+  Month_Name = month(Date, label = TRUE, abbr = TRUE),
+
+# ORIGINAL holiday definition (July, Nov, Dec)
+HolidayMonth = if_else(Month %in% c(7, 11, 12),
+                       "Holiday", "Non-Holiday"),
+HolidayMonth = factor(HolidayMonth),
+
+# NEW: Spring/Easter months (March & April)
+Spring_Easter_Month = Month %in% c(3, 4),
+
+# NEW: Memorial Day month (May)
+Memorial_Month = Month == 5,
+
+# OPTIONAL: broader "major travel" months
+# (Spring break/Easter, Memorial Day, July 4, Thanksgiving, Christmas/New Year)
+Holiday_MajorTravel = if_else(Month %in% c(3, 4, 5, 7, 11, 12),
+                              "Holiday", "Non-Holiday"),
+Holiday_MajorTravel = factor(Holiday_MajorTravel),
+
+Border = factor(Border),
+Measure = factor(Measure),
+`Port.Name` = factor(`Port.Name`),
+Value_log = log1p(Value),
+Lat_scaled = scale(Latitude)[,1], 
+Lon_scaled = scale(Longitude)[,1]
+
+) %>%
+filter(!is.na(Date), !is.na(Value))
+
+summary(border_ca_clean)
+
+```
+
+Check for months labeled as holiday
+```{r}
+border_ca_clean %>%
+  count(Year, Month, Month_Name, HolidayMonth, Holiday_MajorTravel,
+        Spring_Easter_Month, Memorial_Month) %>%
+  arrange(Year, Month) %>%
+  head(50)
+
+```
+
+-Check the counts
+```{r}
+table(border_ca_clean$HolidayMonth)
+table(border_ca_clean$Holiday_MajorTravel)
+```
+
+-quick barplot to check labeling 
+```{r}
+table(border_ca_clean[["Holiday_MajorTravel"]])
+```
+
+#quick viz to check holiday labeling
+```{r}
+ggplot(border_ca_clean, aes(x = Month_Name, fill = HolidayMonth)) +
+  geom_bar() +
+  labs(title = "Count of Observations by Month (Holiday vs Non-Holiday)",
+       x = "Month", y = "Number of Records")
+
+```
+
+Check major travel holiday labels
+
+```{r}
+ggplot(border_ca_clean, aes(x = Month_Name, fill = Holiday_MajorTravel)) +
+geom_bar() +
+labs(title = "Observations by Month (Major Travel Holiday Definition)",
+x = "Month", y = "Number of Records")
+
+```
+
+Monthly totals 
+```{r}
+monthly_ca <- border_ca_clean %>%
+group_by(Date, Month, HolidayMonth) %>%
+summarise(total_value = sum(Value), .groups = "drop")
+
+max_total <- max(monthly_ca[["total_value"]], na.rm = TRUE)
+
+```
+
+
+DESCRIPTIVE STATISTICS
+
+```{r}
+#overall summary 
+desc_ca <- border_ca_clean %>%
+  summarise(
+    mean_value = mean(Value),
+    median_value = median(Value),
+    sd_value = sd(Value),
+    var_value = var(Value)
+  )
+desc_ca
+
+#Holiday/non-holiday
+desc_ca_holiday <- border_ca_clean %>%
+  group_by(HolidayMonth) %>%
+  summarise(
+    mean_value = mean(Value),
+    median_value = median(Value),
+    sd_value = sd(Value),
+    n = n()
+  )
+desc_ca_holiday
+
+#Frequency of transportation modes
+table(border_ca_clean$Measure)
+prop.table(table(border_ca_clean$Measure))
+
+```
+
+
+VISUALIZATION 
+- # Histogram of crossing counts
+```{r}
+ggplot(border_ca_clean, aes(Value)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribution of California Border Crossing Counts",
+       x = "Crossing Count", y = "Frequency")
+```
+
+- Boxplot: Holiday vs Non-Holiday
+```{r}
+ggplot(border_ca_clean, aes(HolidayMonth, Value)) +
+  geom_boxplot() +
+  scale_y_continuous(labels = comma) +
+  labs(title = "California Border Crossings: Holiday vs Non-Holiday",
+       x = "Month Type", y = "Crossing Count")
+```
+
+- Time series trend
+```{r}
+monthly_ca <- border_ca_clean %>%
+  group_by(Date) %>%
+  summarise(total_value = sum(Value))
+
+ggplot(monthly_ca, aes(Date, total_value)) +
+  geom_line(size = 1) +
+  geom_point(color = "blue", size = 1) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Monthly Border Crossings in California Over Time",
+       x = "Date", y = "Total Crossings")
+```
+
+- Trend by holiday 
+```{r}
+monthly_ca_holiday <- border_ca_clean %>%
+  group_by(Date, HolidayMonth) %>%
+  summarise(total_value = sum(Value), .groups="drop")
+
+ggplot(monthly_ca_holiday,
+       aes(Date, total_value, color = HolidayMonth)) +
+  geom_line() +
+  labs(title = "California Monthly Border Crossings by Holiday Status",
+       x = "Date", y = "Total Crossings")
+```
+
+- Correlation heat map for numeric variables
+```{r}
+num_vars_ca <- border_ca_clean %>%
+  select(Value, Value_log, Latitude, Longitude)
+
+cor_mat_ca <- cor(num_vars_ca, use = "complete.obs")
+cor_melt_ca <- melt(cor_mat_ca)
+
+ggplot(cor_melt_ca, aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  geom_text(aes(label = round(value, 2))) +
+  labs(title = "Correlation Heatmap (California Data)",
+       x = "", y = "")
+```
+
+HYPOTHESIS TESTING 
+- T-test: Are crossings higher during holiday months?
+```{r}
+ttest_ca <- t.test(Value_log ~ HolidayMonth, data = border_ca_clean)
+ttest_ca
+```
+
+- ANOVA: Differences by transportation mode
+```{r}
+anova_ca <- aov(Value_log ~ Measure, data = border_ca_clean)
+summary(anova_ca)
+
+##if significant add 
+#TukeyHSD(anova_ca)
+
+```
+
+
+
+- Chi-square: Is HolidayMonth associated with Measure type?
+```{r}
+ca_tab <- table(border_ca_clean[["Measure"]], border_ca_clean[["HolidayMonth"]])
+chisq.test(ca_tab)
+
+```
+
+- Correlation: Latitude vs crossing counts
+
+```{r}
+cor(border_ca_clean[["Value"]], border_ca_clean[["Latitude"]])
+```
+
+LINEAR REGRESION MODEL 
+- Modeling dataset
+```{r}
+model_ca <- border_ca_clean %>%
+  select(Value_log, HolidayMonth, Measure,
+         Year, Month, Lat_scaled, Lon_scaled) %>%
+  na.omit()
+
+nrow(model_ca)
+```
+
+- Train-test split
+```{r}
+set.seed(123)
+n <- nrow(model_ca)
+train_idx <- sample(seq_len(n), size = 0.7*n)
+
+train_ca <- model_ca[train_idx, ]
+test_ca <- model_ca[-train_idx, ]
+```
+
+- Fit linear regression model
+
+```{r}
+lm_ca <- lm(
+  Value_log ~ HolidayMonth + Measure +
+    Year + Month + Lat_scaled + Lon_scaled,
+  data = train_ca
+)
+
+summary(lm_ca)
+
+```
+
+- Predictions on test set
+```{r}
+test_ca[["pred_log"]] <- predict(lm_ca, newdata = test_ca)
+head(test_ca)
+
+```
+
+- RMSE
+```{r}
+rmse_ca <- sqrt(mean((test_ca$pred_log - test_ca[["Value_log"]])^2))
+rmse_ca
+
+```
+
+- Test R²
+```{r}
+
+sst <- sum((test_ca[["Value_log"]] - mean(test_ca[["Value_log"]]))^2)
+sse <- sum((test_ca[["Value_log"]] - test_ca[["pred_log"]])^2)
+r2_test_ca <- 1 - sse/sst
+r2_test_ca
+
+```
+
+- Predicted vs Actual Plot
+```{r}
+ggplot(test_ca, aes(Value_log, pred_log)) +
+  geom_point(alpha = 0.4) +
+  geom_abline(slope=1, intercept=0, linetype="dashed") +
+  labs(title = "Predicted vs Actual (California Border Crossings)",
+       x = "Actual log(1 + Value)", y = "Predicted log(1 + Value)")
+```
+
