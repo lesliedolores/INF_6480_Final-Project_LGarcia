@@ -82,8 +82,8 @@ border_ca_clean %>%
 
 -Check the counts
 ```{r}
-table(border_ca_clean$HolidayMonth)
-table(border_ca_clean$Holiday_MajorTravel)
+table(border_ca_clean[["HolidayMonth"]])
+table(border_ca_clean[["Holiday_MajorTravel"]])
 ```
 
 -quick barplot to check labeling 
